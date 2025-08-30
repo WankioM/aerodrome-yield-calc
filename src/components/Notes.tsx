@@ -164,6 +164,39 @@ export const Notes: React.FC = () => {
         </WarningBox>
       </Section>
 
+      <Section data-section="position-valuation">
+  <SectionTitle>Position Valuation at t1</SectionTitle>
+  <Paragraph>
+    Beyond fee income, your position’s value depends on how token balances evolve with price
+    changes. The calculator compares your LP position against a simple “HODL baseline” at a
+    future price point (t1).
+  </Paragraph>
+
+  <HighlightBox>
+    <strong>V2-Style & Stable Pools:</strong> Your position is valued as a constant share of the pool’s
+    reserves. After price moves, your tokens rebalance along the invariant (x·y=k for volatile pools,
+    stableswap invariant for stable pools). Impermanent loss occurs if the LP value underperforms
+    simply holding the tokens.
+  </HighlightBox>
+
+  <HighlightBox>
+    <strong>Concentrated Liquidity (CL) Pools:</strong> Token balances are derived from your
+    liquidity range. If the price remains within your range, you hold a mix of both tokens and continue
+    earning fees. If the price exits the range, your position becomes fully one-sided (all token0 or all
+    token1), and fees stop accruing until you rebalance.
+  </HighlightBox>
+
+  <FormulaBox>
+    Position Value at t1 = Token0_amount(t1) × Price0(t1) + Token1_amount(t1) × Price1(t1) + Fees Earned
+  </FormulaBox>
+
+  <WarningBox>
+    <strong>Note:</strong> Impermanent loss is calculated by comparing Position Value at t1 versus
+    HODL Value at t1. Even if fees are positive, IL can offset or exceed them when volatility is high.
+  </WarningBox>
+</Section>
+
+
       <Section>
         <SectionTitle>Gauge Emissions & Bribes</SectionTitle>
         <Paragraph>

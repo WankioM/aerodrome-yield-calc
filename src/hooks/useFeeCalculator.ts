@@ -9,10 +9,13 @@ export interface FeeInputs {
   poolType: "volatile" | "stable" | "CL";
   positionValue: number;     // USD
   currentPrice: number;      // USD/ZAR (not used in math yet, but kept for future IL)
+  p0: number;               // initial price for IL calculation
+p1: number;               // scenario price for IL calculation
   lowerTick: number;         // range lower (USD/ZAR)
   upperTick: number;         // range upper (USD/ZAR)
   yourLiquidity: number;     // L_you
   activeLiquidity: number;   // L_active in your range
+  timeInRangeFrac: number;  
 
   // Flow & Microstructure
   swapVolume: number;        // 24h volume crossing your range (USD)
@@ -61,6 +64,9 @@ export interface FeeOutputs {
 
   deficitCovered: number;      // USD/day covered by insurance
   insuranceRemaining: number;  // USD remaining in insurance TVL snapshot
+  positionValueAtP1: number;    // USD value at scenario price
+pnlVsHodl: number;           // position value vs HODL baseline
+ilPct: number;               // impermanent loss percentage
 }
 
 /** ---------- Defaults ---------- */
@@ -70,10 +76,13 @@ export const defaultFeeInputs: FeeInputs = {
   poolType: "CL", // default to concentrated liquidity
   positionValue: 100000,
   currentPrice: 18.75,
+  p0: 18.75,    // initial price
+p1: 18.75,    // scenario price (same as current by default)
   lowerTick: 18.0,
   upperTick: 19.5,
   yourLiquidity: 2.73,
   activeLiquidity: 44609.06,
+  timeInRangeFrac: 1.0, 
 
   // Flow & Microstructure
   swapVolume: 12_500_000,
@@ -103,6 +112,88 @@ export const defaultFeeInputs: FeeInputs = {
   mevBps: 6,
 };
 
+// Helper: Check if current price is within CL range
+function isInRange(currentPrice: number, lowerTick: number, upperTick: number): boolean {
+  return currentPrice >= lowerTick && currentPrice <= upperTick;
+}
+
+// Helper: Calculate realistic time-in-range based on price position
+function calculateTimeInRange(inp: FeeInputs): number {
+  const { currentPrice, lowerTick, upperTick, timeInRangeFrac } = inp;
+  
+  // If user provided explicit timeInRangeFrac, use it
+  if (timeInRangeFrac < 1.0) {
+    return timeInRangeFrac;
+  }
+  
+  // Auto-calculate based on current position
+  if (!isInRange(currentPrice, lowerTick, upperTick)) {
+    return 0; // completely out of range = no fees
+  }
+  
+  // In range: use provided fraction or default to 1.0
+  return timeInRangeFrac;
+}
+
+// Helper: Calculate position value for volatile pools (x*y=k)
+function valueVolatileAt(p1: number, initialValue: number, p0: number): number {
+  if (p0 <= 0) return initialValue;
+  const priceRatio = p1 / p0;
+  // For x*y=k pools: value = initial * 2 * sqrt(priceRatio) / (1 + priceRatio)
+  const il = 2 * Math.sqrt(priceRatio) / (1 + priceRatio);
+  return initialValue * il;
+}
+
+// Helper: Calculate position value for stable pools
+function valueStableAt(p1: number, initialValue: number, p0: number): number {
+  if (p0 <= 0) return initialValue;
+  // Stable pools have much lower IL near peg, approximate with reduced sensitivity
+  const priceRatio = p1 / p0;
+  const deviation = Math.abs(priceRatio - 1);
+  const ilFactor = 1 - (deviation * deviation * 0.1); // much lower IL than volatile
+  return initialValue * ilFactor;
+}
+
+// Helper: Calculate position value for CL pools
+function valueCLAt(p1: number, liquidity: number, lowerTick: number, upperTick: number, _p0: number, initialValue: number): number {
+  if (liquidity <= 0 || lowerTick >= upperTick) return initialValue;
+  
+  // Convert prices to sqrt space
+  const sa = Math.sqrt(lowerTick);
+  const sb = Math.sqrt(upperTick);
+  const s1 = Math.sqrt(p1);
+  
+  let amount0At1 = 0;
+  let amount1At1 = 0;
+  
+  // Calculate amounts at price p1 based on range position
+  if (s1 <= sa) {
+    // All in token0
+    amount0At1 = liquidity * (sb - sa) / (sa * sb);
+    amount1At1 = 0;
+  } else if (s1 >= sb) {
+    // All in token1  
+    amount0At1 = 0;
+    amount1At1 = liquidity * (sb - sa);
+  } else {
+    // Mixed position
+    amount0At1 = liquidity * (sb - s1) / (s1 * sb);
+    amount1At1 = liquidity * (s1 - sa);
+  }
+  
+  // Value in USD (assuming token1 is USD, token0 is ZAR)
+  return amount0At1 * p1 + amount1At1;
+}
+
+// Helper: Calculate HODL baseline value
+function hodlValue(p1: number, initialValue: number, p0: number, zarMix: number): number {
+  if (p0 <= 0) return initialValue;
+  const usdValue = initialValue * (1 - zarMix);
+  const zarValue = initialValue * zarMix;
+  // ZAR value changes with price, USD stays same
+  return usdValue + (zarValue * p1 / p0);
+}
+
 /** ---------- Core Calculator ---------- */
 
 export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
@@ -127,20 +218,25 @@ export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
   const isStable = inp.poolType === "stable";
   const isCL = inp.poolType === "CL";
 
-  // For CL pools, adjust share calculation and volume eligibility
+// For CL pools, calculate realistic volume and range effects
 let effectiveShare = share;
 let effectiveVolume = volume;
 
 if (isCL) {
-  // CL pools only earn fees when price is in range
-  // For now, assume 100% time in range - you can add timeInRangeFrac input later
-  const timeInRangeFrac = 1.0; // TODO: make this an input
-  effectiveVolume = volume * timeInRangeFrac;
+  // Calculate realistic time in range
+  const timeInRange = calculateTimeInRange(inp);
   
-  // CL share is based on active liquidity only, not total pool liquidity
+  // CL pools only earn fees when price is in range
+  effectiveVolume = volume * timeInRange;
+  
+  // CL share is based on active liquidity only
   effectiveShare = share; // already calculated as lYou/lActive which is correct for CL
+  
+  // If completely out of range, set share to 0 as well
+  if (timeInRange === 0) {
+    effectiveShare = 0;
+  }
 }
-
   // Volatility adjustment for stable pools
   let volAdjustment = 1.0;
   if (isStable) {
@@ -191,7 +287,7 @@ const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
   const apr = dailyReturn * 365;
 
   // Break-even fee (decimal)
-  const denom = share * volume;
+  const denom = effectiveShare * effectiveVolume;
   const fixedCosts = lvr + mevHaircut + rebalanceCost;
   const breakEvenFee = denom > 0 ? (fixedCosts / denom) : 0;
 
@@ -200,6 +296,32 @@ const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
   const deficit = Math.max(0, -netFees);
   const coveredByInsurance = Math.min(deficit, insuranceTVL);
   const insuranceRemaining = Math.max(0, insuranceTVL - coveredByInsurance);
+
+  // Position valuation and IL calculation
+const p0 = Math.max(1e-9, nz(inp.p0, inp.currentPrice));
+const p1 = Math.max(1e-9, nz(inp.p1, inp.currentPrice));
+
+let positionValueAtP1 = position; // fallback
+let hodlBaseline = position;
+
+// Calculate position value based on pool type
+if (inp.poolType === "volatile") {
+  positionValueAtP1 = valueVolatileAt(p1, position, p0);
+} else if (inp.poolType === "stable") {
+  positionValueAtP1 = valueStableAt(p1, position, p0);
+} else if (inp.poolType === "CL") {
+  positionValueAtP1 = valueCLAt(p1, nz(inp.yourLiquidity, 0), nz(inp.lowerTick, 0), nz(inp.upperTick, 0), p0, position);
+}
+
+// Add accumulated fees to position value
+positionValueAtP1 += netFees; // assuming 1 day of fees
+
+// Calculate HODL baseline
+hodlBaseline = hodlValue(p1, position, p0, nz(inp.targetZarMix, 0.45));
+
+// IL metrics
+const pnlVsHodl = positionValueAtP1 - hodlBaseline;
+const ilPct = hodlBaseline > 0 ? (pnlVsHodl / hodlBaseline) * 100 : 0;
 
   return {
     dynamicFeePct: fDyn * 100,
@@ -220,6 +342,9 @@ const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
 
     deficitCovered: coveredByInsurance,
     insuranceRemaining,
+    positionValueAtP1,
+pnlVsHodl,
+ilPct,
   };
 }
 

@@ -161,7 +161,7 @@ export const Home: React.FC = () => {
   return (
     <Container>
       <Header>
-        <Title>Aerodrome ZAR/USD Fee Calculator</Title>
+        <Title>Aerodrome Fee Calculator</Title>
         <Subtitle>
           Slipstream Concentrated Liquidity • Target mix: {Math.round(inputs.targetZarMix * 100)}% ZAR / {100 - Math.round(inputs.targetZarMix * 100)}% USD
         </Subtitle>
@@ -218,6 +218,44 @@ export const Home: React.FC = () => {
               step="0.01"
               helpText="Current exchange rate"
             />
+
+<InputField
+  id="p0"
+  label="Initial Price (P0)"
+  value={inputs.p0}
+  onChange={(value) => set('p0', parseFloat(value) || 0)}
+  type="number"
+  step="0.01"
+  unit="USD/ZAR"
+  helpText="Starting price for IL calculation"
+/>
+<InputField
+  id="p1"
+  label="Scenario Price (P1)"
+  value={inputs.p1}
+  onChange={(value) => set('p1', parseFloat(value) || 0)}
+  type="number"
+  step="0.01"
+  unit="USD/ZAR"
+  helpText="Target price for IL calculation"
+/>
+<div style={{
+  display: 'flex',
+  alignItems: 'center',
+  fontSize: '0.8rem',
+  color: 'rgba(255, 255, 255, 0.6)',
+  marginTop: '0.5rem',
+  marginBottom: '1rem',
+  cursor: 'pointer'
+}}
+onClick={() => {
+  const notesSection = document.querySelector('[data-section="position-valuation"]');
+  notesSection?.scrollIntoView({ behavior: 'smooth' });
+}}
+>
+  <InfoIcon style={{ width: '14px', height: '14px', marginRight: '0.5rem' }} />
+  Learn about position valuation & impermanent loss
+</div>
             <InputField
               id="lowerTick"
               label="Range Lower"
@@ -263,6 +301,18 @@ export const Home: React.FC = () => {
               step="0.001"
               helpText="Absolute daily % move (0.05 = 5%)"
             />
+
+<InputField
+  id="timeInRangeFrac"
+  label="Time in Range"
+  value={inputs.timeInRangeFrac}
+  onChange={(value) => set('timeInRangeFrac', parseFloat(value) || 0)}
+  type="number"
+  step="0.1"
+  min="0"
+  max="1"
+  helpText="Fraction of time price stays in your range (1.0 = 100%)"
+/>
           </InputGroup>
 
           <InputGroup>
@@ -560,6 +610,31 @@ export const Home: React.FC = () => {
                   : `${((outputs.dynamicFeePct - outputs.breakEvenFeePct) / outputs.dynamicFeePct * 100).toFixed(1)}% safety margin`
               }
             />
+
+            {/* Position Value */}
+<OutputCard
+  label="Position Value @ P1"
+  value={outputs.positionValueAtP1.toFixed(2)}
+  unit="USD"
+  status={outputs.pnlVsHodl > 0 ? 'positive' : outputs.pnlVsHodl < 0 ? 'negative' : 'neutral'}
+  subText={`At price ${inputs.p1} USD/ZAR`}
+/>
+
+{/* IL Analysis */}
+<OutputCard
+  label="PnL vs HODL"
+  value={outputs.pnlVsHodl >= 0 ? `+${outputs.pnlVsHodl.toFixed(2)}` : outputs.pnlVsHodl.toFixed(2)}
+  unit="USD"
+  status={outputs.pnlVsHodl > 0 ? 'positive' : outputs.pnlVsHodl < 0 ? 'negative' : 'neutral'}
+  subText={`IL: ${outputs.ilPct >= 0 ? '+' : ''}${outputs.ilPct.toFixed(2)}%`}
+  badge={
+    Math.abs(outputs.ilPct) > 5 
+      ? { text: 'High IL', variant: 'warning' }
+      : Math.abs(outputs.ilPct) > 2
+      ? { text: 'Moderate IL', variant: 'info' }  // ← Changed to 'info'
+      : { text: 'Low IL', variant: 'success' }
+  }
+/>
 
             {/* Position Health Summary */}
             <OutputCard
