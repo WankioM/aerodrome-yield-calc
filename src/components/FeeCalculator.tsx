@@ -510,7 +510,8 @@ useEffect(() => {
             />
           </InputGroup>
 
-          <Button onClick={calculateOutputs}>Recalculate</Button>
+          <Button sticky onClick={calculateOutputs}>Recalculate</Button>
+
         </InputSection>
 
         <OutputSection>

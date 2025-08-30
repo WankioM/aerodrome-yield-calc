@@ -4,6 +4,8 @@ import { InputField } from '../components/InputField';
 import { OutputCard } from '../components/OutputCard';
 import { useFeeCalculator } from '../hooks/useFeeCalculator';
 
+import { Notes } from '../components/Notes'
+
 const Container = styled('div', {
   minHeight: '100vh',
   backgroundColor: '$background',
@@ -90,8 +92,38 @@ const OutputGrid = styled('div', {
   gap: '1rem',
 });
 
+
+
+
+
+
+
+
+// near other styled() defs
+const Button = styled('button', {
+  display: 'inline-block',
+  background: 'linear-gradient(135deg, $primary, $secondary)',
+  color: 'white',
+  fontWeight: '600',
+  border: 'none',
+  borderRadius: '10px',
+  padding: '0.9rem 1.25rem',
+  cursor: 'pointer',
+  boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+  '&:hover': { opacity: 0.95, transform: 'translateY(-1px)' },
+  '&:active': { transform: 'translateY(0)' },
+  transition: 'all 120ms ease',
+  variants: {
+    sticky: {
+      true: { position: 'sticky', bottom: 0, marginTop: '1rem', zIndex: 2 },
+    },
+  },
+});
+
+
 export const Home: React.FC = () => {
-  const { inputs, set, outputs } = useFeeCalculator();
+  const { inputs, set, outputs, recalc } = useFeeCalculator();
+
 
   return (
     <Container>
@@ -354,6 +386,8 @@ export const Home: React.FC = () => {
               helpText="MEV haircut on pro-rata volume (default 6bp)"
             />
           </InputGroup>
+
+          <Button sticky onClick={recalc}>Recalculate</Button>
         </InputSection>
 
         <OutputSection>
@@ -488,7 +522,9 @@ export const Home: React.FC = () => {
             />
           </OutputGrid>
         </OutputSection>
+       
       </MainGrid>
+      <Notes />
     </Container>
   );
 };

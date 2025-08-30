@@ -1,5 +1,6 @@
 // src/hooks/useFeeCalculator.ts
-import { useMemo, useState } from 'react';
+
+import { useCallback, useMemo, useState } from 'react';
 
 /** ---------- Types ---------- */
 
@@ -183,6 +184,181 @@ export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
   };
 }
 
+// Types are intentionally minimal and permissive so you don't have to refactor existing code.
+// If you already have Inputs/Outputs types, just remove these and keep the function body.
+type PoolType = "volatile" | "stable" | "CL";
+
+type Inputs = {
+  // Core sizing
+  initialUSD: number;               // your position’s USD mark at t0 (denominator for APR)
+  swapVolume24hUSD: number;         // total 24h swap volume (pool-wide)
+  daysHeld: number;                 // horizon for APR scaling (e.g., 1 for daily)
+
+  // Share model (pick one path)
+  yourLPShare?: number;             // for basic pools: 0..1
+  yourActiveLiquidity?: number;     // for CL: your L in-range
+  totalActiveLiquidity?: number;    // for CL: pool L in-range
+  timeInRangeFrac?: number;         // CL realism: 0..1 fraction of time/volume in your range
+
+  // Fee policy
+  poolType?: PoolType;              // "volatile" | "stable" | "CL"
+  usePoolFee?: boolean;             // if true use poolFeeBps, else compute dynamic
+  poolFeeBps?: number;              // e.g., 5 = 0.05%
+  // Dynamic fee knobs (if you use a custom policy)
+  dynamicFeeParams?: Record<string, number>;
+
+  // Microstructure frictions
+  lvrBps?: number;                  // if provided, overrides estimateLVRBps(.)
+  mevHaircutBps?: number;           // basis-points haircut on fees, default ~5–20 bps of fees
+  // Ops costs
+  gasPerRebalanceUSD?: number;      // per rebalance
+  rebalancesPerDay?: number;        // count per day
+  slippageCostUSD?: number;         // any extra ops slippage you track
+
+  // Insurance / buffer display (optional)
+  poolTVLUSD?: number;
+  insurancePctOfTVL?: number;       // e.g., 0.5% => 0.005
+};
+
+type Outputs = {
+  // Fee rate used
+  effectiveFeeBps: number;
+
+  // Share numbers
+  feeShare: number;                 // fraction of fee flow attributed to you (post in-range logic)
+  volumeInRangeUSD: number;         // volume we actually use to accrue fees
+
+  // Gross / net fee economics
+  grossFeesUSD: number;             // before haircuts/costs
+  mevHaircutUSD: number;
+  lvrUSD: number;                   // liquidity value reduction estimate in USD
+  gasUSD: number;
+  slippageUSD: number;
+  netFeesUSD: number;               // after MEV + LVR (if you treat LVR as fee drag)
+  netPnLUSD: number;                // after ops costs
+
+  // Ratios
+  simpleAPR: number;                // fees-based APR (pre-costs)
+  netAPR: number;                   // after costs
+  breakEvenFeeBps: number;          // fee bps that would zero out netPnL given volume/share
+
+  // Insurance display (optional)
+  insuranceBufferUSD: number;
+};
+
+// --- Optional helper stubs (replace with your actual implementations) ---
+function dynamicFeeBps(_i: Inputs): number {
+  // Your custom dynamic fee model (k1/k2/k3, caps/floors, stress add-on).
+  // Default to pool fee if present; else a sane placeholder.
+  if (_i.usePoolFee && typeof _i.poolFeeBps === "number") return _i.poolFeeBps;
+  return typeof _i.poolFeeBps === "number" ? _i.poolFeeBps : 5; // 0.05% default
+}
+
+function estimateLVRBps(i: Inputs): number {
+  // Your LVR heuristic (e.g., a*σ² + b*latency + c).
+  if (typeof i.lvrBps === "number") return i.lvrBps;
+  // Lightweight default: 0 bps if you haven't wired this yet.
+  return 0;
+}
+
+function bound01(x: number): number {
+  if (!isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
+// ---------------------------------------------------------------
+
+export function computeOutputs(i: Inputs): Outputs {
+  // 1) Effective fee bps (on-chain or dynamic)
+  const effectiveFeeBps = Math.max(0, dynamicFeeBps(i));
+  const feeRate = effectiveFeeBps / 1e4;
+
+  // 2) Determine fee share
+  // For basic pools: use yourLPShare
+  // For CL: use yourActiveLiquidity / totalActiveLiquidity, multiplied by timeInRangeFrac
+  const isCL = i.poolType === "CL";
+  const baseShareBasic = bound01(i.yourLPShare ?? 0);
+
+  let shareCL = 0;
+  if (isCL) {
+    const ya = Math.max(0, i.yourActiveLiquidity ?? 0);
+    const ta = Math.max(0, i.totalActiveLiquidity ?? 0);
+    const tir = bound01(i.timeInRangeFrac ?? 1);
+    shareCL = ta > 0 ? bound01((ya / ta) * tir) : 0;
+  }
+
+  // Final fee share (choose path by pool type)
+  const feeShare = isCL ? shareCL : baseShareBasic;
+
+  // 3) Volume that actually feeds your fees
+  const volumeTotal = Math.max(0, i.swapVolume24hUSD);
+  const volumeInRangeUSD = volumeTotal * feeShare > 0 && isCL
+    ? volumeTotal * bound01(i.timeInRangeFrac ?? 1)
+    : volumeTotal;
+
+  // 4) Gross fees (pool volume × fee × your share)
+  const grossFeesUSD = volumeInRangeUSD * feeRate * (isCL ? (i.totalActiveLiquidity ? (i.yourActiveLiquidity ?? 0) / (i.totalActiveLiquidity ?? 1) : feeShare) : feeShare);
+
+  // 5) Microstructure haircuts
+  // Apply MEV haircut to fees (bps of fees), then subtract LVR as an explicit USD drag.
+  const mevBps = Math.max(0, i.mevHaircutBps ?? 0);
+  const mevHaircutUSD = grossFeesUSD * (mevBps / 1e4);
+
+  // LVR modeled as USD drag against gross fees
+  const lvrBps = Math.max(0, estimateLVRBps(i));
+  const lvrUSD = grossFeesUSD * (lvrBps / 1e4);
+
+  const netFeesUSD = Math.max(0, grossFeesUSD - mevHaircutUSD - lvrUSD);
+
+  // 6) Ops costs (gas + slippage)
+  const gasUSD =
+    Math.max(0, i.gasPerRebalanceUSD ?? 0) * Math.max(0, i.rebalancesPerDay ?? 0) * Math.max(1, i.daysHeld || 1);
+  const slippageUSD = Math.max(0, i.slippageCostUSD ?? 0);
+
+  // 7) Net PnL and APRs
+  const days = Math.max(1e-9, i.daysHeld || 1);
+  const denom = Math.max(1e-9, i.initialUSD || 1);
+
+  const simpleAPR = (netFeesUSD / denom) * (365 / days);                 // before ops costs
+  const netPnLUSD = Math.max(0, netFeesUSD - gasUSD - slippageUSD);      // after ops costs
+  const netAPR = (netPnLUSD / denom) * (365 / days);
+
+  // 8) Break-even fee bps:
+  // Solve netPnLUSD = 0 for feeRate. Approximate by ignoring LVR's dependency on feeRate.
+  // costs to cover = lvr + mev + gas + slippage, but mev/lvr scale with gross fees.
+  // Let G = volumeInRangeUSD * share. net = G*f - G*f*(mevBps+lvrBps)/1e4 - (gas+slip)
+  // => f * (1 - (mevBps+lvrBps)/1e4) = (gas+slip) / G
+  const G = Math.max(1e-9, volumeInRangeUSD * (isCL ? (i.totalActiveLiquidity ? (i.yourActiveLiquidity ?? 0) / (i.totalActiveLiquidity ?? 1) : feeShare) : feeShare));
+  const haircutFactor = 1 - (mevBps + lvrBps) / 1e4;
+  const costsUSD = gasUSD + slippageUSD;
+  const breakEvenFeeRate = haircutFactor > 0 ? (costsUSD / G) / haircutFactor : 0;
+  const breakEvenFeeBps = Math.max(0, breakEvenFeeRate * 1e4);
+
+  // 9) Insurance buffer display (optional)
+  const insuranceBufferUSD =
+    Math.max(0, i.poolTVLUSD ?? 0) * Math.max(0, i.insurancePctOfTVL ?? 0);
+
+  return {
+    effectiveFeeBps,
+    feeShare: isCL ? shareCL : baseShareBasic,
+    volumeInRangeUSD: isCL ? volumeInRangeUSD : volumeTotal,
+
+    grossFeesUSD,
+    mevHaircutUSD,
+    lvrUSD,
+    gasUSD,
+    slippageUSD,
+    netFeesUSD,
+    netPnLUSD,
+
+    simpleAPR,
+    netAPR,
+    breakEvenFeeBps,
+
+    insuranceBufferUSD,
+  };
+}
+
+
 /** ---------- React Hook ---------- */
 
 export function useFeeCalculator(initial: Partial<FeeInputs> = {}) {
@@ -194,6 +370,10 @@ export function useFeeCalculator(initial: Partial<FeeInputs> = {}) {
   };
 
   const outputs = useMemo(() => calculateFeeMetrics(inputs), [inputs]);
+  const recalc = useCallback(() => {
+    setInputs(prev => ({ ...prev }));
+  }, []);
 
-  return { inputs, setInputs, set, outputs };
+
+  return { inputs, set, outputs, recalc }; 
 }
