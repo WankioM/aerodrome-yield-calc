@@ -112,23 +112,37 @@ export const Notes: React.FC = () => {
       </Header>
 
       <DisclaimerBanner>
-        #NotFinancialAdvice - This calculator is for educational purposes only. 
-        Always do your own research and consider professional advice.
+        #NotFinancialAdvice 
       </DisclaimerBanner>
 
-      <Section>
+      <Section data-section="pool-types">
         <SectionTitle>Pool Types on Aerodrome</SectionTitle>
         <Paragraph>
-          Aerodrome Finance operates two distinct types of liquidity pools, each with different mechanics and fee structures:
-        </Paragraph>
-        
-        <HighlightBox>
-          <strong>V2-Style Pools:</strong> Traditional constant product (x×y=k) pools where liquidity is distributed across the entire price curve. These pools use fixed fee rates and are suitable for stable pairs or when you want broad price exposure.
-        </HighlightBox>
-        
-        <HighlightBox>
-          <strong>Concentrated Liquidity (CL) Pools:</strong> Slipstream pools that allow LPs to concentrate liquidity within specific price ranges. This calculator focuses on CL pools, which offer higher capital efficiency but require active management.
-        </HighlightBox>
+  Aerodrome Finance supports multiple pool architectures. Each pool type has its own pricing model,
+  fee mechanics, and risk profile. Understanding the differences is key to using the calculator correctly.
+</Paragraph>
+
+<HighlightBox>
+  <strong>V2-Style Pools:</strong> These use the constant product formula (x × y = k), the same design
+  as Uniswap V2. Liquidity is spread evenly across the entire price curve, meaning LPs earn a share of
+  all swap activity regardless of where the price moves. Fees are fixed per pool, and impermanent loss
+  follows the classic AMM profile. These pools are simple, “set and forget,” but less capital efficient.
+</HighlightBox>
+
+<HighlightBox>
+  <strong>Stable Pools:</strong> Designed for assets that trade closely around a peg (e.g., USDC/DAI or
+  LST/ETH). They use a stableswap invariant (similar to Curve) that allows for deeper liquidity around
+  the peg, reducing slippage for large trades. Fees are generally lower, and impermanent loss risk is
+  minimized as long as assets stay correlated.
+</HighlightBox>
+
+<HighlightBox>
+  <strong>Concentrated Liquidity (CL) Pools:</strong> These “Slipstream” pools allow LPs to allocate
+  liquidity to custom price ranges. Within that band, their capital is much more efficient, generating
+  higher fee returns if the price remains in range. However, when the price moves outside the chosen
+  range, fees stop accruing and the LP’s position becomes fully one-sided. CL pools require active
+  management, rebalancing, and are more sensitive to impermanent loss.
+</HighlightBox>
       </Section>
 
       <Section>
@@ -190,20 +204,7 @@ export const Notes: React.FC = () => {
         </WarningBox>
       </Section>
 
-      <Section>
-        <SectionTitle>ZAR/USD Specific Considerations</SectionTitle>
-        <Paragraph>
-          The ZAR/USD pair exhibits unique characteristics that distinguish it from typical DeFi pairs:
-        </Paragraph>
-
-        <List>
-          <li><strong>Directional Flow Bias:</strong> Often experiences sustained one-way pressure due to carry trades and macro flows</li>
-          <li><strong>Interest Rate Sensitivity:</strong> Heavily influenced by SARB-Fed rate differentials and carry trade dynamics</li>
-          <li><strong>CEX Price Leadership:</strong> DEX prices typically lag centralized exchanges, creating MEV opportunities</li>
-          <li><strong>Volatility Clustering:</strong> Periods of low volatility followed by sharp moves during macro events</li>
-          <li><strong>Emerging Market Dynamics:</strong> Subject to capital flow reversals and sovereign risk premiums</li>
-        </List>
-      </Section>
+      
 
       <Section>
         <SectionTitle>Calculator Limitations</SectionTitle>

@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 export interface FeeInputs {
   // Pool & Position
+  poolType: "volatile" | "stable" | "CL";
   positionValue: number;     // USD
   currentPrice: number;      // USD/ZAR (not used in math yet, but kept for future IL)
   lowerTick: number;         // range lower (USD/ZAR)
@@ -66,6 +67,7 @@ export interface FeeOutputs {
 
 export const defaultFeeInputs: FeeInputs = {
   // Pool & Position
+  poolType: "CL", // default to concentrated liquidity
   positionValue: 100000,
   currentPrice: 18.75,
   lowerTick: 18.0,
@@ -120,26 +122,63 @@ export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
   const moveAbs = Math.abs(nz(inp.dailyMovePct, 0));
   const stress = moveAbs >= 0.05 || (sigma - sigmaAnchor) >= 0.03;
 
+  // Pool-specific fee logic
+  const isVolatile = inp.poolType === "volatile";
+  const isStable = inp.poolType === "stable";
+  const isCL = inp.poolType === "CL";
+
+  // For CL pools, adjust share calculation and volume eligibility
+let effectiveShare = share;
+let effectiveVolume = volume;
+
+if (isCL) {
+  // CL pools only earn fees when price is in range
+  // For now, assume 100% time in range - you can add timeInRangeFrac input later
+  const timeInRangeFrac = 1.0; // TODO: make this an input
+  effectiveVolume = volume * timeInRangeFrac;
+  
+  // CL share is based on active liquidity only, not total pool liquidity
+  effectiveShare = share; // already calculated as lYou/lActive which is correct for CL
+}
+
+  // Volatility adjustment for stable pools
+  let volAdjustment = 1.0;
+  if (isStable) {
+    volAdjustment = 0.5; // stable pools have reduced volatility impact
+  }
+
   // Dynamic fee components (decimals)
-  const fVol   = nz(inp.feeMin, 0) + nz(inp.k1, 0) * Math.max(0, sigma - sigmaAnchor);
-  const fFlow  = nz(inp.k2, 0) * Math.max(0, nz(inp.flowImbalance, 0) - 0.70);
+  const fVol = (nz(inp.feeMin, 0) + nz(inp.k1, 0) * Math.max(0, sigma - sigmaAnchor)) * volAdjustment;
+  const fFlow = nz(inp.k2, 0) * Math.max(0, nz(inp.flowImbalance, 0) - 0.70);
   const spread = nz(inp.sarbRate, 0) - nz(inp.fedRate, 0); // % over 2%
-  const fRate  = nz(inp.k3, 0) * Math.max(0, (spread - 2.0));
+  const fRate = nz(inp.k3, 0) * Math.max(0, (spread - 2.0));
   const fStress = stress ? nz(inp.stressDelta, 0) : 0;
 
   let fDyn = fVol + fFlow + fRate + fStress;
+
+  // Apply pool type multiplier
+  let poolFeeMultiplier = 1.0;
+  if (isVolatile) {
+    poolFeeMultiplier = 1.2; // volatile pools have higher fees
+  } else if (isStable) {
+    poolFeeMultiplier = 0.8; // stable pools have lower fees
+  }
+  // CL pools use 1.0 multiplier (no change)
+
+  fDyn = fDyn * poolFeeMultiplier;
   fDyn = clamp(fDyn, nz(inp.feeMin, 0), nz(inp.feeMax, 0)); // decimal
 
-  // Fees
-  const feesGross = share * volume * fDyn;
 
-  // LVR proxy using vol^2 and lag (seconds)
-  const lagSec = Math.max(0, nz(inp.cexDexLag, 0) / 1000);
-  const lvr = Math.max(0, (0.35 * sigma * sigma + 0.15 * lagSec) * share * volume);
+  // Fees (use effective values for CL)
+const feesGross = effectiveShare * effectiveVolume * fDyn;
 
-  // MEV haircut on pro-rata volume
-  const mevBps = Math.max(0, nz(inp.mevBps ?? 6, 6));
-  const mevHaircut = share * volume * (mevBps / 10_000);
+ // LVR proxy using vol^2 and lag (seconds)
+const lagSec = Math.max(0, nz(inp.cexDexLag, 0) / 1000);
+const lvr = Math.max(0, (0.35 * sigma * sigma + 0.15 * lagSec) * effectiveShare * effectiveVolume);
+
+// MEV haircut on pro-rata volume
+const mevBps = Math.max(0, nz(inp.mevBps ?? 6, 6));
+const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
 
   // Rebalance costs
   const rebalanceCost = Math.max(0, nz(inp.rebalancesPerDay, 0)) * Math.max(0, nz(inp.gasPerRebalance, 0));

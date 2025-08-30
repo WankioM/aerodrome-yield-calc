@@ -3,6 +3,7 @@ import { styled } from '../styles/stitches.config';
 import { InputField } from '../components/InputField';
 import { OutputCard } from '../components/OutputCard';
 import { useFeeCalculator } from '../hooks/useFeeCalculator';
+import { Info } from 'lucide-react';
 
 import { Notes } from '../components/Notes'
 
@@ -92,12 +93,44 @@ const OutputGrid = styled('div', {
   gap: '1rem',
 });
 
+const PoolTypeSelector = styled('div', {
+  display: 'flex',
+  gap: '0.5rem',
+  marginBottom: '1rem',
+  
+  '& button': {
+    padding: '0.5rem 1rem',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'transparent',
+    color: 'rgba(255, 255, 255, 0.7)',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    transition: 'all 0.2s ease',
+    
+    '&:hover': {
+      borderColor: '$primary',
+    },
+    
+    '&.active': {
+      backgroundColor: '$primary',
+      color: 'white',
+      borderColor: '$primary',
+    },
+  },
+});
 
-
-
-
-
-
+const InfoIcon = styled(Info, {
+  width: '16px',
+  height: '16px',
+  cursor: 'pointer',
+  color: 'rgba(255, 255, 255, 0.5)',
+  marginLeft: '0.5rem',
+  
+  '&:hover': {
+    color: '$primary',
+  },
+});
 
 // near other styled() defs
 const Button = styled('button', {
@@ -139,7 +172,34 @@ export const Home: React.FC = () => {
           <SectionTitle>Inputs</SectionTitle>
           
           <InputGroup>
-            <GroupTitle>Pool & Position</GroupTitle>
+          <GroupTitle>
+    Pool & Position
+    <InfoIcon onClick={() => {
+      const notesSection = document.querySelector('[data-section="pool-types"]');
+      notesSection?.scrollIntoView({ behavior: 'smooth' });
+    }} />
+  </GroupTitle>
+  
+  <PoolTypeSelector>
+    <button 
+      className={inputs.poolType === "volatile" ? "active" : ""}
+      onClick={() => set('poolType', "volatile")}
+    >
+      V2 Volatile
+    </button>
+    <button 
+      className={inputs.poolType === "stable" ? "active" : ""}
+      onClick={() => set('poolType', "stable")}
+    >
+      V2 Stable
+    </button>
+    <button 
+      className={inputs.poolType === "CL" ? "active" : ""}
+      onClick={() => set('poolType', "CL")}
+    >
+      Concentrated Liquidity
+    </button>
+  </PoolTypeSelector>
             <InputField
               id="positionValue"
               label="Position USD Value"

@@ -155,6 +155,7 @@ export const FeeCalculator: React.FC = () => {
   const [upperTick, setUpperTick] = useState('19.50');
   const [yourLiquidity, setYourLiquidity] = useState('2.73');
   const [activeLiquidity, setActiveLiquidity] = useState('44609.06');
+
   
   // Flow & Microstructure
   const [swapVolume, setSwapVolume] = useState('12500000');

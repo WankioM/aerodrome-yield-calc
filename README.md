@@ -1,7 +1,7 @@
-# Aerodrome ZAR/USD Fee Calculator
-A specialized calculator for estimating fees and profitability of concentrated liquidity positions in the ZAR/USD pair on Aerodrome's Slipstream pools.
+# Aerodrome Fee Calculator
+A specialized calculator for estimating fees and profitability of concentrated liquidity positions in a pair on Aerodrome's Slipstream pools.
 ## What It Does
-This calculator models the complex fee dynamics of providing liquidity to volatile foreign exchange pairs on Aerodrome Finance. Unlike standard AMM calculators, it accounts for the unique characteristics of emerging market FX pairs like ZAR/USD, including directional flows, interest rate differentials, and high volatility regimes.
+This calculator models the complex fee dynamics of providing liquidity to volatile foreign exchange pairs on Aerodrome Finance. Unlike standard AMM calculators, it accounts for the unique characteristics of emerging market FX pairs , including directional flows, interest rate differentials, and high volatility regimes.
 ## Core Functionality
 ### Dynamic Fee Calculation
 The calculator implements a multi-component fee structure that responds to market conditions:
