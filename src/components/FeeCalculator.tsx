@@ -162,8 +162,8 @@ export const FeeCalculator: React.FC = () => {
   const [realizedVol, setRealizedVol] = useState('0.17');
   const [cexDexLag, setCexDexLag] = useState('450');
 
-  const [gasPerRebalance, setGasPerRebalance] = useState('2.40');
-  const [rebalancesPerDay, setRebalancesPerDay] = useState('1');
+  const [gasPerRebalance, _setGasPerRebalance] = useState('2.40');
+  const [rebalancesPerDay, _setRebalancesPerDay] = useState('1');
   
   // Fee Policy
   const [feeMin, setFeeMin] = useState('0.008');
@@ -172,7 +172,7 @@ export const FeeCalculator: React.FC = () => {
   const [k1, setK1] = useState('3.0');
   const [k2, setK2] = useState('0.5');
   const [k3, setK3] = useState('0.2');
-  const [stressDelta, setStressDelta] = useState('0.006');
+  const [stressDelta,_setStressDelta] = useState('0.006');
   const [dailyMovePct, setDailyMovePct] = useState('0.05');
   
   
@@ -180,7 +180,7 @@ export const FeeCalculator: React.FC = () => {
   const [sarbRate, setSarbRate] = useState('8.25');
   const [fedRate, setFedRate] = useState('5.50');
   const [insuranceBuffer, setInsuranceBuffer] = useState('0.06');
-  const [targetZarMix, setTargetZarMix] = useState('0.50');
+  const [targetZarMix, _setTargetZarMix] = useState('0.50');
   
   // Calculated outputs
   const [outputs, setOutputs] = useState({
