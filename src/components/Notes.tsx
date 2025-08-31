@@ -190,6 +190,8 @@ export const Notes: React.FC = () => {
     Position Value at t1 = Token0_amount(t1) × Price0(t1) + Token1_amount(t1) × Price1(t1) + Fees Earned
   </FormulaBox>
 
+  Negative IL means your LP position underperformed HODL. Positive IL means LP outperformed HODL.
+
   <WarningBox>
     <strong>Note:</strong> Impermanent loss is calculated by comparing Position Value at t1 versus
     HODL Value at t1. Even if fees are positive, IL can offset or exceed them when volatility is high.

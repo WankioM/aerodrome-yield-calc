@@ -17,6 +17,11 @@ p1: number;               // scenario price for IL calculation
   activeLiquidity: number;   // L_active in your range
   timeInRangeFrac: number;  
 
+  // Optional: derive liquidity from token amounts instead of manual input
+amount0?: number;          // ZAR token amount for liquidity derivation
+amount1?: number;          // USD token amount for liquidity derivation
+tickSpacing?: number;      // tick spacing for the pool (e.g., 1, 10, 60, 200)
+
   // Flow & Microstructure
   swapVolume: number;        // 24h volume crossing your range (USD)
   flowImbalance: number;     // 0..1, e.g. 0.72 = 72% one-way
@@ -67,6 +72,10 @@ export interface FeeOutputs {
   positionValueAtP1: number;    // USD value at scenario price
 pnlVsHodl: number;           // position value vs HODL baseline
 ilPct: number;               // impermanent loss percentage
+netEdge: number;             // fees - IL - costs (total edge)
+ilUsd: number;               // impermanent loss in USD
+hodlBaseline: number;        // HODL value at P1
+positionWithoutFees: number; // position value excluding fees
 }
 
 /** ---------- Defaults ---------- */
@@ -83,6 +92,11 @@ p1: 18.75,    // scenario price (same as current by default)
   yourLiquidity: 2.73,
   activeLiquidity: 44609.06,
   timeInRangeFrac: 1.0, 
+
+  // Optional liquidity derivation
+amount0: undefined,        // let users choose manual L or derive from amounts
+amount1: undefined,
+tickSpacing: 1,           // default tick spacing
 
   // Flow & Microstructure
   swapVolume: 12_500_000,
@@ -194,6 +208,67 @@ function hodlValue(p1: number, initialValue: number, p0: number, zarMix: number)
   return usdValue + (zarValue * p1 / p0);
 }
 
+
+
+
+function liquidityFromAmounts(amount0: number, amount1: number, pL: number, pU: number): number {
+  if (pL >= pU || pL <= 0 || pU <= 0) return 0;
+  
+  const sa = Math.sqrt(pL);   // sqrt(P_L)
+  const sb = Math.sqrt(pU);   // sqrt(P_U)
+  
+  // Calculate liquidity from each token amount
+  let l0 = 0;
+  let l1 = 0;
+  
+  if (amount0 > 0) {
+    l0 = amount0 * (sa * sb) / (sb - sa);
+  }
+  
+  if (amount1 > 0) {
+    l1 = amount1 / (sb - sa);
+  }
+  
+  // Return minimum (the limiting factor)
+  if (l0 > 0 && l1 > 0) {
+    return Math.min(l0, l1);
+  } else if (l0 > 0) {
+    return l0;
+  } else {
+    return l1;
+  }
+}
+
+// Helper: Calculate token amounts from liquidity at a given price
+function amountsFromLiquidity(L: number, price: number, pL: number, pU: number): { amount0: number, amount1: number } {
+  if (L <= 0 || pL >= pU) return { amount0: 0, amount1: 0 };
+  
+  const sa = Math.sqrt(pL);
+  const sb = Math.sqrt(pU);
+  const s = Math.sqrt(price);
+  
+  let amount0 = 0;
+  let amount1 = 0;
+  
+  if (s <= sa) {
+    // All in token0 (ZAR)
+    amount0 = L * (sb - sa) / (sa * sb);
+    amount1 = 0;
+  } else if (s >= sb) {
+    // All in token1 (USD)
+    amount0 = 0;
+    amount1 = L * (sb - sa);
+  } else {
+    // Mixed position
+    amount0 = L * (sb - s) / (s * sb);
+    amount1 = L * (s - sa);
+  }
+  
+  return { amount0, amount1 };
+}
+
+
+
 /** ---------- Core Calculator ---------- */
 
 export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
@@ -207,6 +282,21 @@ export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
   const share = clamp(lYou / lActive, 0, 1);
   const volume = Math.max(0, nz(inp.swapVolume, 0));
 
+  // Derive liquidity if amounts are provided, otherwise use manual input
+let actualLiquidity = lYou;
+if (inp.amount0 !== undefined && inp.amount1 !== undefined && inp.poolType === "CL") {
+  actualLiquidity = liquidityFromAmounts(
+    nz(inp.amount0, 0),
+    nz(inp.amount1, 0), 
+    nz(inp.lowerTick, 0),
+    nz(inp.upperTick, 0),
+
+  );
+}
+
+// Recalculate share using derived liquidity
+const actualShare = clamp(actualLiquidity / lActive, 0, 1);
+
   // Stress logic: |daily move| ≥ 5% OR realizedVol - anchor ≥ 3%
   const sigma = Math.max(0, nz(inp.realizedVol, 0));
   const sigmaAnchor = Math.max(0, nz(inp.volAnchor, 0));
@@ -219,7 +309,7 @@ export function calculateFeeMetrics(inp: FeeInputs): FeeOutputs {
   const isCL = inp.poolType === "CL";
 
 // For CL pools, calculate realistic volume and range effects
-let effectiveShare = share;
+let effectiveShare = actualShare;
 let effectiveVolume = volume;
 
 if (isCL) {
@@ -298,30 +388,42 @@ const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
   const insuranceRemaining = Math.max(0, insuranceTVL - coveredByInsurance);
 
   // Position valuation and IL calculation
+// Position valuation and IL calculation
 const p0 = Math.max(1e-9, nz(inp.p0, inp.currentPrice));
 const p1 = Math.max(1e-9, nz(inp.p1, inp.currentPrice));
 
-let positionValueAtP1 = position; // fallback
-let hodlBaseline = position;
 
-// Calculate position value based on pool type
+const hodlBaseline = hodlValue(p1, position, p0, nz(inp.targetZarMix, 0.45));
+
+// Calculate position value WITHOUT fees at P1
+let positionWithoutFees = position; // fallback
+
 if (inp.poolType === "volatile") {
-  positionValueAtP1 = valueVolatileAt(p1, position, p0);
+  positionWithoutFees = valueVolatileAt(p1, position, p0);
 } else if (inp.poolType === "stable") {
-  positionValueAtP1 = valueStableAt(p1, position, p0);
+  positionWithoutFees = valueStableAt(p1, position, p0);
 } else if (inp.poolType === "CL") {
-  positionValueAtP1 = valueCLAt(p1, nz(inp.yourLiquidity, 0), nz(inp.lowerTick, 0), nz(inp.upperTick, 0), p0, position);
+  if (inp.amount0 !== undefined && inp.amount1 !== undefined) {
+    const amountsAtP1 = amountsFromLiquidity(actualLiquidity, p1, nz(inp.lowerTick, 0), nz(inp.upperTick, 0));
+    positionWithoutFees = amountsAtP1.amount0 * p1 + amountsAtP1.amount1;
+  } else {
+    positionWithoutFees = valueCLAt(p1, actualLiquidity, nz(inp.lowerTick, 0), nz(inp.upperTick, 0), p0, position);
+  }
 }
 
-// Add accumulated fees to position value
-positionValueAtP1 += netFees; // assuming 1 day of fees
+// Calculate impermanent loss (HODL - position without fees)
+const ilUsd = positionWithoutFees - hodlBaseline;
+const ilPct = hodlBaseline > 0 ? (ilUsd / hodlBaseline) * 100 : 0;
 
-// Calculate HODL baseline
-hodlBaseline = hodlValue(p1, position, p0, nz(inp.targetZarMix, 0.45));
+// Position value WITH fees
+const positionValueAtP1 = positionWithoutFees + netFees;
 
-// IL metrics
+// PnL vs HODL (including fees)
 const pnlVsHodl = positionValueAtP1 - hodlBaseline;
-const ilPct = hodlBaseline > 0 ? (pnlVsHodl / hodlBaseline) * 100 : 0;
+
+// Net Edge = fees - IL - costs
+
+const netEdge = netFees - ilUsd;
 
   return {
     dynamicFeePct: fDyn * 100,
@@ -345,6 +447,10 @@ const ilPct = hodlBaseline > 0 ? (pnlVsHodl / hodlBaseline) * 100 : 0;
     positionValueAtP1,
 pnlVsHodl,
 ilPct,
+ilUsd,
+hodlBaseline,
+positionWithoutFees,
+netEdge,
   };
 }
 
@@ -363,6 +469,11 @@ type Inputs = {
   yourActiveLiquidity?: number;     // for CL: your L in-range
   totalActiveLiquidity?: number;    // for CL: pool L in-range
   timeInRangeFrac?: number;         // CL realism: 0..1 fraction of time/volume in your range
+
+  // Optional: derive liquidity from token amounts instead of manual input
+amount0?: number;          // ZAR token amount for liquidity derivation
+amount1?: number;          // USD token amount for liquidity derivation
+tickSpacing?: number;      // tick spacing for the pool (e.g., 1, 10, 60, 200)
 
   // Fee policy
   poolType?: PoolType;              // "volatile" | "stable" | "CL"

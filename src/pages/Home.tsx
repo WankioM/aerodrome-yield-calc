@@ -441,6 +441,41 @@ onClick={() => {
               step="0.001"
               helpText="Additional fee bump when stressed (0.006 = 0.6%)"
             />
+
+            {/* CL Liquidity Derivation - only show for CL pools */}
+{inputs.poolType === "CL" && (
+  <>
+    <InputField
+      id="amount0"
+      label="ZAR Amount (optional)"
+      value={inputs.amount0 || ''}
+      onChange={(value) => set('amount0', value ? parseFloat(value) : undefined)}
+      type="number"
+      step="0.01"
+      unit="ZAR"
+      helpText="Derive liquidity from token amounts instead of manual L"
+    />
+    <InputField
+      id="amount1"
+      label="USD Amount (optional)"
+      value={inputs.amount1 || ''}
+      onChange={(value) => set('amount1', value ? parseFloat(value) : undefined)}
+      type="number"
+      step="0.01"
+      unit="USD"
+      helpText="USD token amount for liquidity derivation"
+    />
+    <InputField
+      id="tickSpacing"
+      label="Tick Spacing"
+      value={inputs.tickSpacing || 1}
+      onChange={(value) => set('tickSpacing', parseFloat(value) || 1)}
+      type="number"
+      step="1"
+      helpText="Pool tick spacing (1, 10, 60, 200)"
+    />
+  </>
+)}
           </InputGroup>
 
           <InputGroup>
@@ -633,6 +668,35 @@ onClick={() => {
       : Math.abs(outputs.ilPct) > 2
       ? { text: 'Moderate IL', variant: 'info' }  // ← Changed to 'info'
       : { text: 'Low IL', variant: 'success' }
+  }
+/>
+
+{/* IL Breakdown */}
+<OutputCard
+  label="Impermanent Loss"
+  value={outputs.ilUsd >= 0 ? `+${outputs.ilUsd.toFixed(2)}` : outputs.ilUsd.toFixed(2)}
+  unit="USD"
+  status={outputs.ilUsd > 0 ? 'negative' : outputs.ilUsd < -50 ? 'positive' : 'neutral'}
+  subText={`${outputs.ilPct >= 0 ? '+' : ''}${outputs.ilPct.toFixed(2)}% vs HODL`}
+  breakdown={[
+    { label: 'HODL Value @ P1', value: outputs.hodlBaseline.toFixed(2), unit: 'USD' },
+    { label: 'Position w/o Fees', value: outputs.positionWithoutFees.toFixed(2), unit: 'USD' },
+  ]}
+/>
+
+{/* Net Edge */}
+<OutputCard
+  label="Net Edge"
+  value={outputs.netEdge >= 0 ? `+${outputs.netEdge.toFixed(2)}` : outputs.netEdge.toFixed(2)}
+  unit="USD/day"
+  status={outputs.netEdge > 0 ? 'positive' : 'negative'}
+  subText="Fees - IL - Costs (true daily edge)"
+  badge={
+    outputs.netEdge > 50 
+      ? { text: 'Strong Edge', variant: 'success' }
+      : outputs.netEdge > 0
+      ? { text: 'Positive', variant: 'info' }
+      : { text: 'Negative Edge', variant: 'error' }
   }
 />
 
