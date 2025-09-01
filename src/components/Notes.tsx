@@ -130,11 +130,12 @@ export const Notes: React.FC = () => {
 </HighlightBox>
 
 <HighlightBox>
-  <strong>Stable Pools:</strong> Designed for assets that trade closely around a peg (e.g., USDC/DAI or
-  LST/ETH). They use a stableswap invariant (similar to Curve) that allows for deeper liquidity around
-  the peg, reducing slippage for large trades. Fees are generally lower, and impermanent loss risk is
-  minimized as long as assets stay correlated.
+  <strong>Stable Pools:</strong> Pegged assets use a stableswap invariant (Curve-style).
+  Valuation and quotes should respect the invariant D, not x·y=k. In the app, a
+  <code>stableQuote(xIn)</code> numeric solver returns <em>dy</em> and <em>newPrice</em> for valuation at t1.
+  Fees still accrue ≈ pro-rata TVL near the peg, but price impact and IL must use the stableswap curve.
 </HighlightBox>
+
 
 <HighlightBox>
   <strong>Concentrated Liquidity (CL) Pools:</strong> These “Slipstream” pools allow LPs to allocate
@@ -179,6 +180,13 @@ export const Notes: React.FC = () => {
     simply holding the tokens.
   </HighlightBox>
 
+  <Paragraph>
+  <em>Stable pool note:</em> For t1 valuation, use the stableswap invariant (D) or a robust
+  quoting function (<code>stableQuote</code>) rather than constant-product math. This is how we compute
+  token balances and price after hypothetical trades before adding fees.
+</Paragraph>
+
+
   <HighlightBox>
     <strong>Concentrated Liquidity (CL) Pools:</strong> Token balances are derived from your
     liquidity range. If the price remains within your range, you hold a mix of both tokens and continue
@@ -199,26 +207,30 @@ export const Notes: React.FC = () => {
 </Section>
 
 
-      <Section>
-        <SectionTitle>Gauge Emissions & Bribes</SectionTitle>
-        <Paragraph>
-          Beyond swap fees, Aerodrome LPs earn additional rewards through the gauge system:
-        </Paragraph>
+<Section>
+  <SectionTitle>Gauge Emissions & Bribes (ve(3,3))</SectionTitle>
+  <Paragraph>
+    Aerodrome rewards aren’t Uni v3-style only-fees. Pools get AERO emissions and may receive
+    external bribes. Your daily rewards depend on pool vote weight and your LP share (with optional veBoost).
+  </Paragraph>
 
-        <List>
-          <li><strong>AERO Emissions:</strong> Base protocol rewards distributed to pools based on voting weight</li>
-          <li><strong>Bribes:</strong> Additional incentives paid by protocols to direct votes toward specific pools</li>
-          <li><strong>Vote Weight:</strong> Your share of emissions depends on the total votes directed to your pool</li>
-        </List>
+  <List>
+    <li><strong>Inputs:</strong> <code>weeklyAERO</code>, <code>poolVotes</code>, <code>totalVotes</code>, <code>yourLPShareInPool</code>, <code>veBoost</code>, <code>bribesPerVoteUSD</code></li>
+    <li><strong>Pool Emissions:</strong> <code>poolEmissions = weeklyAERO × (poolVotes / totalVotes)</code></li>
+    <li><strong>Your Emissions:</strong> <code>yourEmission = poolEmissions × yourLPShareInPool × veBoost</code></li>
+    <li><strong>Bribes (USD):</strong> <code>bribesUSD = poolVotes × bribesPerVoteUSD × yourLPShareInPool</code></li>
+    <li><strong>Outputs displayed (per day):</strong> Emissions/day, Bribes/day, and their contribution to Net PnL/APR</li>
+  </List>
 
-        <FormulaBox>
-          Your Emissions = Pool Emissions × (Your Vote Weight / Total Pool Votes)
-        </FormulaBox>
+  <FormulaBox>
+    Total Rewards/day = Emissions/day + Bribes/day
+  </FormulaBox>
 
-        <Paragraph>
-          The gauge system creates additional yield beyond swap fees, but requires active participation in Aerodrome's governance through veAERO voting or delegation.
-        </Paragraph>
-      </Section>
+  <Paragraph>
+    We include these rewards in Net PnL and APR breakdowns in addition to swap fees.
+  </Paragraph>
+</Section>
+
 
       <Section>
         <SectionTitle>APR Calculation Methods</SectionTitle>
@@ -234,9 +246,16 @@ export const Notes: React.FC = () => {
           <strong>Method 2 - Total Position Value:</strong> Uses your total position value as denominator. This method provides a more conservative APR estimate and better reflects actual returns on your deployed capital.
         </HighlightBox>
 
+        <Paragraph>
+  We show an APR breakdown: <strong>Fees APR</strong> (from swaps) and <strong>Rewards APR</strong> (emissions + bribes).
+  <strong>Total APR</strong> = Fees APR + Rewards APR. When displaying “Net”, we subtract MEV/LVR/ops costs.
+</Paragraph>
+
         <WarningBox>
           Always verify which calculation method is being used when comparing APRs across platforms or making investment decisions.
         </WarningBox>
+        
+
       </Section>
 
       
