@@ -48,6 +48,18 @@ tickSpacing?: number;      // tick spacing for the pool (e.g., 1, 10, 60, 200)
   insuranceBuffer: number;   // decimal of TVL, e.g. 0.06 = 6%
   targetZarMix: number;      // 0..1 (display only for now)
   mevBps?: number;           // default 6 bp on pro-rata volume
+
+  // Emissions & Bribes (ve(3,3))
+weeklyAERO?: number;           // Weekly AERO emissions to distribute
+poolVotes?: number;            // Votes this pool received
+totalVotes?: number;           // Total votes across all pools
+yourLPShareInPool?: number;    // Your share of this pool's total liquidity (0..1)
+veBoost?: number;              // Your veNFT boost factor (1.0 = no boost, 2.5 = max)
+bribesPerVoteUSD?: number;     // USD value of bribes per vote
+aeroPrice?: number;            // AERO token price in USD
+
+// APR Calculation Mode
+useActiveLiquidityAPR?: boolean; // For CL: use active liquidity as denominator
 }
 
 export interface FeeOutputs {
@@ -76,6 +88,18 @@ netEdge: number;             // fees - IL - costs (total edge)
 ilUsd: number;               // impermanent loss in USD
 hodlBaseline: number;        // HODL value at P1
 positionWithoutFees: number; // position value excluding fees
+
+// Emissions & Bribes
+emissionsUSD: number;          // USD/day from AERO emissions
+bribesUSD: number;             // USD/day from bribes
+totalRewardsUSD: number;       // emissions + bribes per day
+
+// Enhanced APR breakdown
+feesAPR: number;               // APR from fees only
+rewardsAPR: number;            // APR from emissions+bribes
+totalAPR: number;              // combined APR including all rewards
+
+enhancedNetPnL: number;
 }
 
 /** ---------- Defaults ---------- */
@@ -124,6 +148,18 @@ tickSpacing: 1,           // default tick spacing
   insuranceBuffer: 0.06,
   targetZarMix: 0.45,  // 45% ZAR / 55% USD default (USD-heavy)
   mevBps: 6,
+
+  // Emissions & Bribes (ve(3,3))
+weeklyAERO: 1000000,           // 1M AERO per week example
+poolVotes: 50000,              // Example pool votes
+totalVotes: 1000000,           // Total voting power
+yourLPShareInPool: 0.001,      // 0.1% of pool
+veBoost: 1.0,                  // No boost
+bribesPerVoteUSD: 0.05,        // $0.05 per vote
+aeroPrice: 0.50,               // $0.50 per AERO
+
+// APR mode
+useActiveLiquidityAPR: false,  // Use total position value by default
 };
 
 // Helper: Check if current price is within CL range
@@ -158,13 +194,26 @@ function valueVolatileAt(p1: number, initialValue: number, p0: number): number {
   return initialValue * il;
 }
 
-// Helper: Calculate position value for stable pools
-function valueStableAt(p1: number, initialValue: number, p0: number): number {
+// Helper: Calculate position value for stable pools using curve mechanics
+function valueStableAt(p1: number, initialValue: number, p0: number, reserves?: { x: number, y: number }): number {
   if (p0 <= 0) return initialValue;
-  // Stable pools have much lower IL near peg, approximate with reduced sensitivity
+  
+  // If we have reserve data, use curve quoting
+  if (reserves && reserves.x > 0 && reserves.y > 0) {
+    const priceChange = (p1 - p0) / p0;
+    const tradeSize = Math.abs(priceChange) * reserves.x * 0.1; // Approximate trade size
+    const quote = stableQuote(tradeSize, reserves.x, reserves.y);
+    const slippage = Math.abs(quote.newPrice - p0) / p0;
+    
+    // Stable pools have minimal IL but still some curve-based impact
+    const ilFactor = 1 - (slippage * slippage * 0.05);
+    return initialValue * ilFactor;
+  }
+  
+  // Fallback to simplified model
   const priceRatio = p1 / p0;
   const deviation = Math.abs(priceRatio - 1);
-  const ilFactor = 1 - (deviation * deviation * 0.1); // much lower IL than volatile
+  const ilFactor = 1 - (deviation * deviation * 0.1);
   return initialValue * ilFactor;
 }
 
@@ -267,6 +316,50 @@ function amountsFromLiquidity(L: number, price: number, pL: number, pU: number):
   return { amount0, amount1 };
 }
 
+// Helper: Stable pool quote using simplified curve approximation
+function stableQuote(xIn: number, xReserve: number, yReserve: number, A: number = 100): { dy: number, newPrice: number } {
+  if (xIn <= 0 || xReserve <= 0 || yReserve <= 0) {
+    return { dy: 0, newPrice: 0 };
+  }
+  
+  // Simplified stable curve: dy ≈ xIn * (yReserve/xReserve) with reduced slippage
+  const basePrice = yReserve / xReserve;
+  const slippageFactor = 1 - (xIn / (xReserve * A)); // A controls slippage
+  const dy = xIn * basePrice * Math.max(0.01, slippageFactor);
+  const newPrice = (yReserve - dy) / (xReserve + xIn);
+  
+  return { dy, newPrice };
+}
+
+// Helper: Calculate emissions and bribes for ve(3,3) model
+function estimateEmissionsAndBribes(inp: FeeInputs): { emissionsUSD: number, bribesUSD: number } {
+  const safeGet = (n: number | undefined, fallback = 0) => (Number.isFinite(n) ? n! : fallback);
+  const clampLocal = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
+  
+  const weeklyAERO = safeGet(inp.weeklyAERO, 0);
+  const poolVotes = safeGet(inp.poolVotes, 0);
+  const totalVotes = Math.max(1, safeGet(inp.totalVotes, 1));
+  const yourLPShare = clampLocal(safeGet(inp.yourLPShareInPool, 0), 0, 1);
+  const veBoost = Math.max(1, safeGet(inp.veBoost, 1));
+  const aeroPrice = Math.max(0, safeGet(inp.aeroPrice, 0));
+  const bribesPerVote = Math.max(0, safeGet(inp.bribesPerVoteUSD, 0));
+
+  // Pool gets this fraction of weekly emissions
+  const poolEmissionShare = poolVotes / totalVotes;
+  const poolEmissionsWeekly = weeklyAERO * poolEmissionShare;
+  
+  // Your share of pool emissions (with veBoost)
+  const yourEmissionsWeekly = poolEmissionsWeekly * yourLPShare * veBoost;
+  const emissionsUSD = (yourEmissionsWeekly * aeroPrice) / 7; // Convert to daily
+  
+  // Your bribes based on your LP share of the voted pool
+  const yourBribesWeekly = bribesPerVote * poolVotes * yourLPShare;
+  const bribesUSD = yourBribesWeekly / 7; // Convert to daily
+  
+  return { emissionsUSD, bribesUSD };
+}
+
+
 
 
 /** ---------- Core Calculator ---------- */
@@ -362,6 +455,8 @@ const feesGross = effectiveShare * effectiveVolume * fDyn;
 const lagSec = Math.max(0, nz(inp.cexDexLag, 0) / 1000);
 const lvr = Math.max(0, (0.35 * sigma * sigma + 0.15 * lagSec) * effectiveShare * effectiveVolume);
 
+
+
 // MEV haircut on pro-rata volume
 const mevBps = Math.max(0, nz(inp.mevBps ?? 6, 6));
 const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
@@ -371,6 +466,22 @@ const mevHaircut = effectiveShare * effectiveVolume * (mevBps / 10_000);
 
   // Net
   const netFees = feesGross - lvr - mevHaircut - rebalanceCost;
+
+  // Calculate emissions and bribes
+const { emissionsUSD, bribesUSD } = estimateEmissionsAndBribes(inp);
+const totalRewardsUSD = emissionsUSD + bribesUSD;
+
+// Enhanced APR calculations using existing position variable
+const denominator = inp.useActiveLiquidityAPR && isCL ? 
+  Math.max(1e-9, inp.activeLiquidity * inp.currentPrice) : 
+  position;
+
+const feesAPR = (netFees / denominator) * 365;
+const rewardsAPR = (totalRewardsUSD / denominator) * 365;
+const totalAPRCalc = feesAPR + rewardsAPR;
+
+// Update net calculations to include rewards
+const enhancedNetPnL = netFees + totalRewardsUSD;
 
   // APR (simple annualization)
   const dailyReturn = netFees / position;
@@ -451,6 +562,13 @@ ilUsd,
 hodlBaseline,
 positionWithoutFees,
 netEdge,
+emissionsUSD,
+bribesUSD, 
+totalRewardsUSD,
+feesAPR: feesAPR * 100,
+rewardsAPR: rewardsAPR * 100,
+totalAPR: totalAPRCalc * 100,
+enhancedNetPnL,
   };
 }
 

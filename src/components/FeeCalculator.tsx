@@ -182,7 +182,16 @@ export const FeeCalculator: React.FC = () => {
   const [fedRate, setFedRate] = useState('5.50');
   const [insuranceBuffer, setInsuranceBuffer] = useState('0.06');
   const [targetZarMix, _setTargetZarMix] = useState('0.50');
-  
+
+  // Emissions & Bribes
+const [weeklyAERO, setWeeklyAERO] = useState('1000000');
+const [poolVotes, setPoolVotes] = useState('50000');
+const [totalVotes, setTotalVotes] = useState('1000000');
+const [yourLPShareInPool, setYourLPShareInPool] = useState('0.001');
+const [veBoost, setVeBoost] = useState('1.0');
+const [bribesPerVoteUSD, setBribesPerVoteUSD] = useState('0.05');
+const [aeroPrice, setAeroPrice] = useState('0.50');
+
   // Calculated outputs
   const [outputs, setOutputs] = useState({
     dynamicFee: 0,
@@ -193,7 +202,6 @@ export const FeeCalculator: React.FC = () => {
     mevHaircut: 0,
     rebalanceCost: 0,
     breakEvenFee: 0,
-    // NEW: explainability + stress + insurance
     fVol: 0,
     fFlow: 0,
     fRate: 0,
@@ -201,7 +209,17 @@ export const FeeCalculator: React.FC = () => {
     stress: false,
     deficitCovered: 0,
     insuranceRemaining: 0,
+  
+    // add these to match what you set/read later:
+    emissionsUSD: 0,
+    bribesUSD: 0,
+    totalRewardsUSD: 0,
+    feesAPR: 0,
+    rewardsAPR: 0,
+    totalAPR: 0,
+    enhancedNetPnL: 0,
   });
+  
   
 
 
@@ -275,6 +293,31 @@ useEffect(() => {
         const deficit = Math.max(0, -netFees);
         const coveredByInsurance = Math.min(deficit, insuranceTVL);
         const insuranceRemaining = Math.max(0, insuranceTVL - coveredByInsurance);
+
+        // Calculate emissions and bribes
+const weeklyAEROVal = parseFloat(weeklyAERO) || 0;
+const poolVotesVal = parseFloat(poolVotes) || 0;
+const totalVotesVal = Math.max(1, parseFloat(totalVotes) || 1);
+const lpShareVal = Math.max(0, parseFloat(yourLPShareInPool) || 0);
+const veBoostVal = Math.max(1, parseFloat(veBoost) || 1);
+const aeroPriceVal = Math.max(0, parseFloat(aeroPrice) || 0);
+const bribesPerVoteVal = Math.max(0, parseFloat(bribesPerVoteUSD) || 0);
+
+// Pool emissions allocation
+const poolEmissionsWeekly = weeklyAEROVal * (poolVotesVal / totalVotesVal);
+const yourEmissionsWeekly = poolEmissionsWeekly * lpShareVal * veBoostVal;
+const emissionsDaily = (yourEmissionsWeekly * aeroPriceVal) / 7;
+
+// Bribes calculation
+const yourBribesWeekly = bribesPerVoteVal * poolVotesVal * lpShareVal;
+const bribesDaily = yourBribesWeekly / 7;
+
+const totalRewards = emissionsDaily + bribesDaily;
+
+// Enhanced APR calculations
+const feesAPR = (netFees / position) * 365 * 100;
+const rewardsAPR = (totalRewards / position) * 365 * 100;
+const totalAPR = feesAPR + rewardsAPR;
       
         setOutputs({
           dynamicFee: fDyn * 100,
@@ -292,6 +335,13 @@ useEffect(() => {
           stress,
           deficitCovered: coveredByInsurance,
           insuranceRemaining,
+          emissionsUSD: emissionsDaily,
+  bribesUSD: bribesDaily,
+  totalRewardsUSD: totalRewards,
+  feesAPR,
+  rewardsAPR,
+  totalAPR,
+  enhancedNetPnL: netFees + totalRewards,
         });
       };
 
@@ -511,6 +561,72 @@ useEffect(() => {
             />
           </InputGroup>
 
+          <InputGroup>
+  <GroupTitle>Emissions & Bribes (ve(3,3))</GroupTitle>
+  <InputField
+    id="weeklyAERO"
+    label="Weekly AERO Emissions"
+    value={weeklyAERO}
+    onChange={setWeeklyAERO}
+    type="number"
+    helpText="Total AERO tokens distributed weekly"
+  />
+  <InputField
+    id="poolVotes"
+    label="Pool Votes"
+    value={poolVotes}
+    onChange={setPoolVotes}
+    type="number"
+    helpText="veAERO votes this pool received"
+  />
+  <InputField
+    id="totalVotes"
+    label="Total Votes"
+    value={totalVotes}
+    onChange={setTotalVotes}
+    type="number"
+    helpText="Total veAERO votes across all pools"
+  />
+  <InputField
+    id="yourLPShareInPool"
+    label="Your LP Share in Pool"
+    value={yourLPShareInPool}
+    onChange={setYourLPShareInPool}
+    type="number"
+    step="0.0001"
+    helpText="Your fraction of total pool liquidity"
+  />
+  <InputField
+    id="veBoost"
+    label="veBoost Factor"
+    value={veBoost}
+    onChange={setVeBoost}
+    type="number"
+    step="0.1"
+    helpText="Your veNFT boost (1.0 = no boost, 2.5 = max)"
+  />
+  <InputField
+    id="aeroPrice"
+    label="AERO Price"
+    value={aeroPrice}
+    onChange={setAeroPrice}
+    type="number"
+    step="0.01"
+    unit="USD"
+    helpText="Current AERO token price"
+  />
+  <InputField
+    id="bribesPerVoteUSD"
+    label="Bribes per Vote"
+    value={bribesPerVoteUSD}
+    onChange={setBribesPerVoteUSD}
+    type="number"
+    step="0.01"
+    unit="USD"
+    helpText="USD value of bribes per vote"
+  />
+</InputGroup>
+
           <Button sticky onClick={calculateOutputs}>Recalculate</Button>
 
         </InputSection>
@@ -605,6 +721,33 @@ useEffect(() => {
                 <OutputUnit>%</OutputUnit>
               </OutputValue>
             </OutputCard>
+
+            <OutputCard>
+  <OutputLabel>AERO Emissions</OutputLabel>
+  <OutputValue>
+    ${outputs.emissionsUSD?.toFixed(2) || '0.00'}
+    <OutputUnit>/day</OutputUnit>
+  </OutputValue>
+</OutputCard>
+
+<OutputCard>
+  <OutputLabel>Bribes</OutputLabel>
+  <OutputValue>
+    ${outputs.bribesUSD?.toFixed(2) || '0.00'}
+    <OutputUnit>/day</OutputUnit>
+  </OutputValue>
+</OutputCard>
+
+<OutputCard>
+  <OutputLabel>Total APR (Fees + Rewards)</OutputLabel>
+  <OutputValue>
+    {outputs.totalAPR?.toFixed(2) || '0.00'}
+    <OutputUnit>%</OutputUnit>
+  </OutputValue>
+  <OutputLabel>
+    Fees: {outputs.feesAPR?.toFixed(2) || '0.00'}% • Rewards: {outputs.rewardsAPR?.toFixed(2) || '0.00'}%
+  </OutputLabel>
+</OutputCard>
           </OutputGrid>
 
           
